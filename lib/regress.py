@@ -2,6 +2,17 @@ import os
 import copy
 from map import *
 
+from celery import Celery
+from celery.task.control import inspect
+
+import lib
+
+import celeryconfig
+import time
+
+celery = Celery()
+celery.config_from_object(celeryconfig)
+
 class State:
     def __init__(self):
         # List of positions we've been in since the last time the map
@@ -10,23 +21,49 @@ class State:
         # The actual direction of our last move, excluding waits
         self.lastMoveDir = None
         self.moveList = []
+        self.shortestSolution = 50000000
+        self.maxDepth = 18
+
+# Contest1 = DLLDDRRLLL
 
 def regress(map):
     state = State()
 
-    if os.fork() == 0:
-        return r(state, map, MOVE_UP, 1)
+    jobs = []
+    #jobs.append(lib.regress.r.delay(state, map, MOVE_UP, 1))
+    #jobs.append(lib.regress.r.delay(state, map, MOVE_DOWN, 1))
+    #jobs.append(lib.regress.r.delay(state, map, MOVE_LEFT, 1))
+    #jobs.append(lib.regress.r.delay(state, map, MOVE_RIGHT, 1))
+    #jobs.append(lib.regress.r.delay(state, map, MOVE_WAIT, 1))
 
-    if os.fork() == 0:
-        return r(state, map, MOVE_DOWN, 1)
+    state.shortestSolution = r(state, map, MOVE_UP, 1)
+    
+    state.shortestSolution = r(state, map, MOVE_DOWN, 1)
+    state.shortestSolution = r(state, map, MOVE_LEFT, 1)
+    state.shortestSolution = r(state, map, MOVE_RIGHT, 1)
+    state.shortestSolution = r(state, map, MOVE_WAIT, 1)
 
-    if os.fork() == 0:
-        return r(state, map, MOVE_LEFT, 1)
+    print "Started..."
+    time.sleep(5)
 
-    if os.fork() == 0:
-        return r(state, map, MOVE_RIGHT, 1)
+    #i = inspect()
 
-    return r(state, map, MOVE_WAIT, 1)
+    #while(True):
+        #time.sleep(5)
+        #print i.active()
+
+    #def getFinished():
+         #return [ j for j in jobs if j.state == 'FAILURE' or j.state ==
+                 #'SUCCESS' ]
+
+    #finished = getFinished()
+    #while len(finished) != len(jobs):
+        #time.sleep(2)
+
+        #finished = getFinished()
+
+        #print len(finished), "finished"
+
 
 # Return the opposite direction
 def opDir(dir):
@@ -45,6 +82,7 @@ def updateLastMoveDir(state, move):
     else:
         state.lastMoveDir = move
 
+@celery.task
 def r(state, map, move, depth):
     oldmap = map
     oldstate = state
@@ -55,13 +93,13 @@ def r(state, map, move, depth):
         # Well, we died - so probably not a great idea
         if map.died:
             print "Died at depth", depth, "ended"
-            return 
+            return state.shortestSolution
 
         # We tried to move NOT wait...but we didn't move. That means we're
         # trying to move into a wall 
         if map.robot_pos == oldmap.robot_pos and move != MOVE_WAIT:
             print "Invalid move", depth, "ended"
-            return
+            return state.shortestSolution
 
         state.moveList.append(move)
         print "Took move: ", move, "recursion depth",depth, "total moves",len(state.moveList)
@@ -70,8 +108,14 @@ def r(state, map, move, depth):
         print map
 
         if map.done:
-            print "Success in", len(state.moveList), "moves:", state.moveList
-            return 
+            print "Success in " + str(len(state.moveList)) +  " moves: " +\
+            str(state.moveList) + " vs " + str(state.shortestSolution)
+            return len(state.moveList)
+
+        if len(state.moveList) >= state.shortestSolution:
+            print "Bailing not going more steps than our shortest solution of",\
+                state.shortestSolution
+            return state.shortestSolution
 
         ###
         ## Update the state following a move
@@ -93,7 +137,7 @@ def r(state, map, move, depth):
                     # return False
                 if idx != -1:
                     print "Branch looped at depth", depth, "ended"
-                    return 
+                    return state.shortestSolution
 
         # If the map changed, clear the position list
         if map.changed:
@@ -109,30 +153,48 @@ def r(state, map, move, depth):
         ###
         ## Recursively continue regression
         ###
+
+        moves = []
         
         for dir in [MOVE_UP,MOVE_DOWN,MOVE_RIGHT,MOVE_LEFT]:
             # If we're trying to go in a direction that is not the direction we
             # came from, try it
             if dir != opDir(state.lastMoveDir):
-                r(state, map, dir,depth+1)
+                moves.append(dir)
             # Or if we are turning around, but we changed the map - that is
             # okay
             elif map.changed:
                 print "Turning around after map changed"
-                r(state, map, dir,depth+1)
+                moves.append(dir)
 
         # If we already waited but the map changed, try again
         if move == MOVE_WAIT and map.changed:
-            r(state, map, MOVE_WAIT,depth+1)
+            moves.append(MOVE_WAIT)
         # But if we waited and the map didn't change, don't wait again
         elif move == MOVE_WAIT:
             pass
         # else we didn't wait so, go ahead and try waiting
         else:
-            r(state, map, MOVE_WAIT,depth+1)
+            moves.append(MOVE_WAIT)
 
-        print "Branch failed at depth", depth
-        return 
+                #lib.regress.r.delay(state, map, dir,depth+1)
+
+        if len(moves) == 0:
+            print "Branch failed at depth", depth
+            return state.shortestSolution
+
+        if (depth+1)>= state.maxDepth:
+            print "Branch died at depth", depth+1
+            return state.shortestSolution
+
+        for move in moves:
+            if (depth+1) < state.shortestSolution:
+                state.shortestSolution = min(r(state, map, move, depth+1),\
+                        state.shortestSolution)
+            else:
+                print "Not recursing because", depth+1, ">", state.shortestSolution
+
+        return state.shortestSolution
 
     ## Movement rules
     # Try each direction that is NOT the direction we came from
