@@ -2,6 +2,7 @@ import os
 import gc
 import sys
 
+from chooser import *
 from eval import eval
 import md5
 
@@ -33,12 +34,16 @@ class State:
         self.lastMoveDir = None
         self.moveList = []
         self.hs = None
+        self.prevPos = None
+        self.posList = []
 
     def copy(self, old):
         self.posList = list(old.posList)
         self.viewList = list(old.viewList)
         self.lastMoveDir = old.lastMoveDir
         self.moveList = list(old.moveList)
+        self.prevPos = old.prevPos
+        self.posList = old.posList
 
     def __repr__(self):
         res = "".join(self.moveList) + "\n"
@@ -68,6 +73,8 @@ def aggress(map):
 
     #print "Regressing..."
     state = State()
+    state.posList = [map.robot_pos]
+    state.prevPos = map.robot_pos
 
     jobs = []
 
@@ -126,50 +133,50 @@ def getValidMoves(map):
 
     return valid
 
+def removeMove(dir, validMoves):
+    if dir in validMoves:
+        idx = validMoves.index(dir)
+        validMoves.pop(idx)
+
+def doMove(l, hs,d, q,state,map,depth, move):
+    newMap = Map()
+    newMap.copy(map)
+
+    newState = State()
+    newState.copy(state)
+
+    tryMove(l, hs,d,q,newState,newMap,move,depth)
+
 def a(l, hs,d, q,state,map,depth):
     validMoves = getValidMoves(map)
 
-    if len(state.moveList) > 0:
-        lastMove = state.moveList[-0]
+    chooserState = {}
 
-        if lastMove in validMoves:
-            newMap = Map()
-            newMap.copy(map)
+    move = chooseDir(l, hs,d, q,state,map,depth, validMoves, chooserState)
+    while move != None:
+        removeMove(move, validMoves)
 
-            newState = State()
-            newState.copy(state)
-
-            tryMove(l, hs,d,q,newState,newMap,lastMove,depth)
-
-            idx = validMoves.index(lastMove)
-            validMoves.pop(idx)
-
-    shuffle(validMoves)
-
-    for move in validMoves:
-        newMap = Map()
-        newMap.copy(map)
-
-        newState = State()
-        newState.copy(state)
-
-        tryMove(l, hs,d,q,newState,newMap,move,depth)
+        #print os.getpid(), "Evaling..."
+        doMove(l, hs,d, q,state,map,depth, move)
+        #print os.getpid(), "Done"
+        move = chooseDir(l, hs,d, q,state,map,depth, validMoves, chooserState)
 
 def tryMove(l, hs, d,q,state,map,move,depth):
-    prevPos = map.robot_pos
+    state.prevPos = map.robot_pos
+    state.posList.append(map.robot_pos)
 
     map.move(move)
 
     if knownMap(l, d, state, map):
         return 
 
-    if map.robot_pos == prevPos:
+    if map.robot_pos == state.prevPos:
         return
 
     if map.died:
         return 
 
-    evalMove(l, hs, d, state, map, move, prevPos)
+    evalMove(l, hs, d, state, map, move, state.prevPos)
 
     recurse(l, hs, d, q,state,map,move,depth)
 
@@ -177,7 +184,7 @@ def recurse(l, hs, d, q,state,map,move,depth):
     if len(state.moveList) != depth:
         print "Moves", state.moveList, len(state.moveList), depth
         
-    if (depth+1) > maxDepth:
+    if (depth+1) >=(map.width*map.height):
         #print "Bailing past maxDepth", depth+1, maxDepth
         return 
 
@@ -324,7 +331,7 @@ def _knownMap(l, d, state, map, nesting):
         d[hashVal] = (stateCopy, map)
         #l.release()
         return False
-    except:
+    except Exception as e:
         if nesting < 3:
             l.acquire()
             res = _knownMap(l, d, state, map, nesting+1)

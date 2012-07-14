@@ -1,1 +1,1 @@
-import regress
+__all__=['svm', 'svmutil']

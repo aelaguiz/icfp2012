@@ -17,7 +17,25 @@ def moveInt(move):
     else:
         return 0
 
-def viewport(map, curPos, prevPos, prevMove):
+def blockInt(block):
+    if block == ROBOT:
+        return 0
+    elif block == ROCK:
+        return 1
+    elif block == EMPTY:
+        return 2
+    elif block == LAMBDA:
+        return 3
+    elif block == OPEN_LIFT:
+        return 4
+    elif block == CLOSED_LIFT:
+        return 5
+    elif block == EARTH:
+        return 6
+    else:
+        return 7
+
+def viewport(map, curPos, prevPos, prevMove, posList):
     width = 3
     height = 3
 
@@ -32,13 +50,16 @@ def viewport(map, curPos, prevPos, prevMove):
             y = y + map.robot_pos[1]
 
             if map.valid(x,y):
-                blocks.append(map.get(x,y))
+                # Mark any place we've been with an 8
+                if (x,y) in posList:
+                    blocks.append(8)
+                else:
+                    blocks.append(blockInt(map.get(x,y)))
             else:
-                blocks.append('X')
+                blocks.append(blockInt(None))
 
-    blocks.append(curPos[0])
-    blocks.append(curPos[1])
-    blocks.append(prevPos[0])
-    blocks.append(prevPos[1])
-    blocks.append(moveInt(prevMove))
+    blocks.append(curPos[0]-prevPos[0])
+    blocks.append(curPos[1]-prevPos[1])
+    blocks.append(map.lam_count())
+    blocks.append(map.lams)
     return blocks

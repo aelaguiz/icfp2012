@@ -5,6 +5,7 @@ from eval import eval
 from map import Map
 from aggress import aggress
 from regress import regress
+from gen import gen
 from port import svm
 
 def parseArgs():
@@ -23,10 +24,18 @@ def parseArgs():
     parser.add_argument('-e', '--eval', dest='eval',type=str,
             required=False, help="Eval moves")
 
+    parser.add_argument('-g', '--g', dest='gen',type=str,
+            required=False, help="Generate training data")
+
+
     return parser.parse_args()
 
 def main():
     args = parseArgs()
+
+    if args.gen:
+        gen(args.gen)
+        return
 
     map = Map()
 
