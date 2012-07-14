@@ -10,8 +10,6 @@ from multiprocessing import Process,JoinableQueue,Value
 import copy
 from map import *
 
-import lib
-
 import time
 
 bigNumber = 5000000000

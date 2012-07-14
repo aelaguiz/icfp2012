@@ -14,14 +14,12 @@ from multiprocessing import Process,JoinableQueue,Value,Manager,RLock
 import copy
 from map import *
 
-import lib
-
 import time
 
 bigNumber = 5000000000
 numProcs = 16
 multiProc=True
-maxDepth = 80
+maxDepth = 30
 startMap = None
 
 class State:
@@ -120,8 +118,8 @@ def multiMain(sm, l, d, q, hs):
 
 def getValidMoves(map):
     valid = []
-    moves = [MOVE_UP,MOVE_DOWN,MOVE_RIGHT,MOVE_LEFT,MOVE_WAIT]
-    #moves = [MOVE_UP,MOVE_DOWN,MOVE_RIGHT,MOVE_LEFT]
+    #moves = [MOVE_UP,MOVE_DOWN,MOVE_RIGHT,MOVE_LEFT,MOVE_WAIT]
+    moves = [MOVE_UP,MOVE_DOWN,MOVE_RIGHT,MOVE_LEFT]
     for dir in moves:
         if map.valid_move(dir):
             valid.append(dir)
@@ -129,109 +127,58 @@ def getValidMoves(map):
     return valid
 
 def a(l, hs,d, q,state,map,depth):
-    if knownMap(l, d, state, map):
-        return 
-
     validMoves = getValidMoves(map)
 
-    shuffle(validMoves)
+    if len(state.moveList) > 0:
+        lastMove = state.moveList[-0]
 
-    #print map
-    #print validMoves
+        if lastMove in validMoves:
+            newMap = Map()
+            newMap.copy(map)
+
+            newState = State()
+            newState.copy(state)
+
+            tryMove(l, hs,d,q,newState,newMap,lastMove,depth)
+
+            idx = validMoves.index(lastMove)
+            validMoves.pop(idx)
+
+    shuffle(validMoves)
 
     for move in validMoves:
         newMap = Map()
         newMap.copy(map)
 
-        tryMove(l, hs,d,q,state,newMap,move,depth)
+        newState = State()
+        newState.copy(state)
 
-def getHash(map):
-    m = md5.new()
+        tryMove(l, hs,d,q,newState,newMap,move,depth)
 
-    for row in map.map:
-        m.update(str(row))
-    m.update(str(map.lams))
-    m.update(str(map.robot_pos))
-
-    return m.hexdigest()
-
-def knownMap(l, d, state, map):
-    return _knownMap(l, d, state, map, 0)
-
-def _knownMap(l, d, state, map, nesting):
-    try:
-        hashVal = getHash(map)
-
-        #l.acquire()
-        if hashVal in d:
-            (oldState, oldMap) = d[hashVal]
-
-            newScore = calcScore(state,map)
-            oldScore = calcScore(oldState, oldMap)
-
-            #print "----------------------------"
-            #print state.moveList, newScore
-            #print "gets us to the same spot as"
-            #print oldState.moveList, oldScore
-
-            if newScore > oldScore:
-                #print "New score is higher, removing old entry"
-                #print state.moveList, newScore
-                #print oldState.moveList, oldScore
-                del d[hashVal]
-                #l.release()
-                return False
-
-            #print "Known map", map.lams, "Lams"
-            #print map
-            #print "Same as", oldMap.lams, "Lams"
-            #print oldMap
-
-            for (y,row) in enumerate(map.map):
-                for (x, cell) in enumerate(row):
-                    if oldMap.map[y][x] != cell:
-                        print "WTF, They aren't the same"
-                        print map
-                        print oldMap
-
-            #print "----------------------------"
-            #l.release()
-            return True
-
-        stateCopy = State()
-        stateCopy.copy(state)
-        d[hashVal] = (stateCopy, map)
-        #l.release()
-        return False
-    except:
-        if nesting < 3:
-            l.acquire()
-            res = _knownMap(l, d, state, map, nesting+1)
-            l.release()
-            return res
-        else:
-            print "Failed after ", nesting, "nested calls"
-
-
-def tryMove(l, hs, d,q,oldState,map,move,depth):
+def tryMove(l, hs, d,q,state,map,move,depth):
     prevPos = map.robot_pos
 
     map.move(move)
 
-    if map.died:
+    if knownMap(l, d, state, map):
         return 
 
-    # Now copy state, since we're going with this move
-    state = State()
-    state.copy(oldState)
+    if map.robot_pos == prevPos:
+        return
+
+    if map.died:
+        return 
 
     evalMove(l, hs, d, state, map, move, prevPos)
 
     recurse(l, hs, d, q,state,map,move,depth)
 
 def recurse(l, hs, d, q,state,map,move,depth):
+    if len(state.moveList) != depth:
+        print "Moves", state.moveList, len(state.moveList), depth
+        
     if (depth+1) > maxDepth:
-        #print "Bailing past maxDepth", depth+1
+        #print "Bailing past maxDepth", depth+1, maxDepth
         return 
 
     if map.died:
@@ -242,10 +189,16 @@ def recurse(l, hs, d, q,state,map,move,depth):
         #print "Success!"
         return
 
-    if q != None and not q.full():
+    if queueOk(q):
         q.put((state,map,depth+1))
     else:
         a(l, hs,d,q,state,map,depth+1)
+
+def queueOk(q):
+    if sys.platform == 'darwin':
+        return q != None and not q.full()
+
+    return q != None and q.qsize() < 1000
 
 def evalMove(l, hs,d, state,map,move, prevPos):
     state.moveList.append(move)
@@ -283,12 +236,14 @@ def evalScore(l, hs,d, score, state, map):
         print "New high score", score
         print "Moves taken", numMoves
         print "Path: ", path
+        print "Map: "
+        print map
 
-        map = Map()
-        print startMap
-        map.copy(startMap)
+        #map = Map()
+        #print startMap
+        #map.copy(startMap)
 
-        eval(path, map)
+        #eval(path, map)
 
         #checkHigher(l, hs, d, state, map)
 
@@ -320,3 +275,72 @@ def checkHigher(l, hs, d, oldState, oldMap):
                 print newScore, state.moveList
                 print savedScore, savedState.moveList
         #l.release()
+
+def knownMap(l, d, state, map):
+    return _knownMap(l, d, state, map, 0)
+
+def _knownMap(l, d, state, map, nesting):
+    try:
+        hashVal = getHash(map)
+
+        #l.acquire()
+        if hashVal in d:
+            (oldState, oldMap) = d[hashVal]
+
+            newScore = calcScore(state,map)
+            oldScore = calcScore(oldState, oldMap)
+
+            #print "----------------------------"
+            #print state.moveList, newScore
+            #print "gets us to the same spot as"
+            #print oldState.moveList, oldScore
+
+            if newScore > oldScore:
+                #print "New score is higher, removing old entry"
+                #print state.moveList, newScore
+                #print oldState.moveList, oldScore
+                del d[hashVal]
+                #l.release()
+                return False
+
+            #print "Known map", map.lams, "Lams"
+            #print map
+            #print "Same as", oldMap.lams, "Lams"
+            #print oldMap
+
+            #for (y,row) in enumerate(map.map):
+                #for (x, cell) in enumerate(row):
+                    #if oldMap.map[y][x] != cell:
+                        #print "WTF, They aren't the same"
+                        #print map
+                        #print oldMap
+
+            #print "----------------------------"
+            #l.release()
+            return True
+
+        stateCopy = State()
+        stateCopy.copy(state)
+        d[hashVal] = (stateCopy, map)
+        #l.release()
+        return False
+    except:
+        if nesting < 3:
+            l.acquire()
+            res = _knownMap(l, d, state, map, nesting+1)
+            l.release()
+            return res
+        else:
+            print "Failed after ", nesting, "nested calls"
+
+
+def getHash(map):
+    m = md5.new()
+
+    for row in map.map:
+        m.update(str(row))
+    m.update(str(map.lams))
+    m.update(str(map.robot_pos))
+
+    return m.hexdigest()
+
