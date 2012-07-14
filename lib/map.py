@@ -37,8 +37,17 @@ class Map:
 
     def addLine(self, line):
         # Assumes no trailing newline
-        if self.width != -1 and len(line) != self.width:
-            raise ICFPError("Invalid input")
+
+        if self.width != -1 and len(line) < self.width:
+            while(len(line)<self.width):
+                line += EMPTY
+
+        elif self.width != -1 and len(line) > self.width:
+            self.width = len(line)
+
+            for row in self.map:
+                while(len(row)<self.width):
+                    row.append(EMPTY)
         else:
             self.width = len(line)
 
@@ -51,7 +60,7 @@ class Map:
             for (x,cell) in enumerate(row):
                 if cell == ROBOT:
                     self.robot_pos = (x,y)
-                    print "Found robot at", self.robot_pos
+                    #print "Found robot at", self.robot_pos
 
     def __repr__(self):
         res = ""
@@ -63,7 +72,7 @@ class Map:
                     self.robot_pos[0]:
                     res += 'H'
                 #elif cell == 'R':
-                    #print "Got robot at ",x,y,"coords are",self.robot_pos
+                    ##print "Got robot at ",x,y,"coords are",self.robot_pos
                     #res += str(cell)
                 else:
                     res += str(cell)
@@ -76,7 +85,7 @@ class Map:
             y >= 0 and y < self.height:
                 return True
 
-        print x,y,"not valid within",self.width,self.height
+        #print x,y,"not valid within",self.width,self.height
         return False
 
     def get(self, x,y):
@@ -116,7 +125,7 @@ class Map:
 
         # A wait move just means tick the map and return
         if(move == MOVE_WAIT):
-            print "Waiting at", self.robot_pos
+            #print "Waiting at", self.robot_pos
             self.update()
             return True
 
@@ -131,7 +140,7 @@ class Map:
 
         new_pos = self.robot_pos
 
-        print "Attempting move",move,"from", new_pos
+        #print "Attempting move",move,"from", new_pos
 
         #Move left, L, moving the Robot from (x; y) to (x  1; y).
         #Move right, R, moving the Robot from (x; y) to (x + 1; y).
@@ -148,28 +157,28 @@ class Map:
 
         # Invalid destination, just fail
         if not valid(new_pos[0], new_pos[1]):
-            print "New position not valid", new_pos
+            #print "New position not valid", new_pos
             return False
 
         new_cell = self.get(new_pos[0], new_pos[1])
 
-        #print "New cell is",new_cell, " at ", new_pos
+        ##print "New cell is",new_cell, " at ", new_pos
         #(x', y' ) is Empty, Earth, Lambda or Open Lambda Lift.
         #   - If it is a Lambda, that Lambda is collected.
         #   - If it is an Open Lambda Lift, the mine is completed
         if new_cell == EMPTY or new_cell == EARTH:
-            print "Movement",move,"valid into empty or earthen cell"
+            #print "Movement",move,"valid into empty or earthen cell"
             # Allow default movement
             pass
 
         elif new_cell == LAMBDA:
             self.lams += 1
-            print "Movement",move,"valid into lambda"
-            print "Collected lambda, now have", self.lams
+            #print "Movement",move,"valid into lambda"
+            #print "Collected lambda, now have", self.lams
             self.changed = True
 
         elif new_cell == OPEN_LIFT:
-            print "Mine complete!"
+            #print "Mine complete!"
             self.done = True
 
         # If x' = x + 1 and y' = y (i.e. the Robot moves right), (x'
@@ -178,7 +187,7 @@ class Map:
             empty(self.robot_pos[0]+2,self.robot_pos[1]):
             # Additionally, the Rock moves to (x + 2; y).
             self.set(self.robot_pos[0]+2, self.robot_pos[1], ROCK)
-            print "Movement",move,"valid valid pushing rock right"
+            #print "Movement",move,"valid valid pushing rock right"
             self.changed = True
 
         # If x' = x - 1 and y' = y (i.e. the Robot moves left), (x'
@@ -187,16 +196,16 @@ class Map:
             empty(self.robot_pos[0]-2,self.robot_pos[1]):
             # Additionally, the Rock moves to (x - 2; y).
             self.set(self.robot_pos[0]-2, self.robot_pos[1], ROCK)
-            print "Movement",move,"valid valid pushing rock left"
+            #print "Movement",move,"valid valid pushing rock left"
             self.changed = True
 
         else:
             # This is an invalid move, so we just return
             # which prevents the move from actually being taken
             # and instead the robot "waits"
-            print "Movement",move,"invalid - just waiting at",self.robot_pos
+            #print "Movement",move,"invalid - just waiting at",self.robot_pos
             self.update()
-            print "After update for wait",self.robot_pos
+            #print "After update for wait",self.robot_pos
             return True
 
         self.set(self.robot_pos[0], self.robot_pos[1], EMPTY)
@@ -206,7 +215,7 @@ class Map:
         self.robot_pos = new_pos
 
         self.update()
-        print "Took move",move,"from",oldpos,"to",new_pos
+        #print "Took move",move,"from",oldpos,"to",new_pos
         return True
 
     def update(self):
@@ -247,12 +256,12 @@ class Map:
                 # If (x; y) contains a Rock, and (x; y - 1) is Empty:
                 if cell == ROCK and empty(x,y-1):
                     # (x; y) is updated to Empty, (x; y - 1) is updated to Rock
-                    print "Rock at",x,y,"fell"
+                    #print "Rock at",x,y,"fell"
                     set(x,y, EMPTY)
                     set(x,y-1, ROCK)
 
                     if robot(x,y-2):
-                        print "Killed the robot!"
+                        #print "Killed the robot!"
                         self.died = True
 
                 #If (x; y) contains a Rock, (x; y  - 1) contains a Rock, (x +
@@ -261,12 +270,12 @@ class Map:
                     empty(x+1,y-1):
                     #(x; y) is updated to Empty, (x + 1; y -  1) is updated to
                     #Rock
-                    print "Rock at",x,y,"slid to the right and down"
+                    #print "Rock at",x,y,"slid to the right and down"
                     set(x,y, EMPTY)
                     set(x+1,y-1, ROCK)
 
                     if robot(x+1,y-2):
-                        print "Killed the robot!"
+                        #print "Killed the robot!"
                         self.died = True
 
                 #If (x; y) contains a Rock, (x; y - 1) contains a Rock, either (x
@@ -276,12 +285,12 @@ class Map:
                     not_empty(x+1,y-1)) and empty(x-1,y) and empty(x-1,y-1):
                     # (x; y) is updated to Empty, (x - 1; y - 1) is updated to
                     # Rock.) 
-                    print "Rock at",x,y,"slid to the left and down"
+                    #print "Rock at",x,y,"slid to the left and down"
                     set(x,y, EMPTY)
                     set(x-1,y-1,ROCK)
 
                     if robot(x-1,y-2):
-                        print "Killed the robot!"
+                        #print "Killed the robot!"
                         self.died = True
 
                 #If (x; y) contains a Rock, (x; y -  1) contains a Lambda, (x + 1; y) 
@@ -289,12 +298,12 @@ class Map:
                 if cell == ROCK and lam(x,y-1) and empty(x+1,y) and\
                     empty(x+1,y-1):
                     #(x; y) is updated to Empty, (x + 1; y - 1) is updated to Rock.
-                    print "Rock at ",x,y,"fell down the right side of lambda"
+                    #print "Rock at ",x,y,"fell down the right side of lambda"
                     set(x,y,EMPTY)
                     set(x+1,y-1,ROCK)
 
                     if robot(x+1,y-2):
-                        print "Killed the robot!"
+                        #print "Killed the robot!"
                         self.died = True
 
                 # If (x; y) contains a Closed Lambda Lift, and there are no

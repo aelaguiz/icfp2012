@@ -1,56 +1,83 @@
 import os
+import gc
+
+from port import viewport
+
+from random import shuffle
+
+from multiprocessing import Process,JoinableQueue,Value
+
 import copy
 from map import *
 
-from celery import Celery
-from celery.task.control import inspect
-
 import lib
 
-import celeryconfig
 import time
 
-celery = Celery()
-celery.config_from_object(celeryconfig)
-
+bigNumber = 5000000000
 class State:
     def __init__(self):
         # List of positions we've been in since the last time the map
         # changed
         self.posList = []
+        # Viewports at each move
+        self.viewList = []
         # The actual direction of our last move, excluding waits
         self.lastMoveDir = None
         self.moveList = []
-        self.shortestSolution = 50000000
-        self.maxDepth = 18
+        self.maxDepth = 100
+
+    def __repr__(self):
+        res = "".join(self.moveList) + "\n"
+
+        for i,move in enumerate(self.moveList):
+            res += "{0} {1} {2}\n".format(i,move,self.viewList[i])
+        return res
+
+    def getTrainingData(self):
+        classes = []
+        samples = []
+
+        #samples += [{ i+1: v for (i,v) in enumerate(row[1])}]
+        for i,move in enumerate(self.moveList):
+            view = self.viewList[i]
+
+            classes.append(move)
+            samples += [{ j+1: v for (j,v) in enumerate(self.viewList[i])}]
+
+        return (classes, samples)
 
 # Contest1 = DLLDDRRLLL
 
 def regress(map):
+    #print "Regressing..."
     state = State()
 
     jobs = []
-    #jobs.append(lib.regress.r.delay(state, map, MOVE_UP, 1))
-    #jobs.append(lib.regress.r.delay(state, map, MOVE_DOWN, 1))
-    #jobs.append(lib.regress.r.delay(state, map, MOVE_LEFT, 1))
-    #jobs.append(lib.regress.r.delay(state, map, MOVE_RIGHT, 1))
-    #jobs.append(lib.regress.r.delay(state, map, MOVE_WAIT, 1))
 
-    state.shortestSolution = r(state, map, MOVE_UP, 1)
+    shortestSolution = Value('d', bigNumber)
+    highestScore = Value('d', 0)
+
+    queue = JoinableQueue()
+
+    queue.put((state, map, MOVE_UP, 1))
     
-    state.shortestSolution = r(state, map, MOVE_DOWN, 1)
-    state.shortestSolution = r(state, map, MOVE_LEFT, 1)
-    state.shortestSolution = r(state, map, MOVE_RIGHT, 1)
-    state.shortestSolution = r(state, map, MOVE_WAIT, 1)
+    queue.put((state, map, MOVE_DOWN, 1))
+    queue.put((state, map, MOVE_LEFT, 1))
+    queue.put((state, map, MOVE_RIGHT, 1))
+    queue.put((state, map, MOVE_WAIT, 1))
 
-    print "Started..."
-    time.sleep(5)
+    for i in range(8):
+        p = Process(target = l, args=(queue,shortestSolution,highestScore))
+        p.start()
+
+    queue.join()
 
     #i = inspect()
 
     #while(True):
         #time.sleep(5)
-        #print i.active()
+        ##print i.active()
 
     #def getFinished():
          #return [ j for j in jobs if j.state == 'FAILURE' or j.state ==
@@ -62,7 +89,7 @@ def regress(map):
 
         #finished = getFinished()
 
-        #print len(finished), "finished"
+        ##print len(finished), "finished"
 
 
 # Return the opposite direction
@@ -82,8 +109,28 @@ def updateLastMoveDir(state, move):
     else:
         state.lastMoveDir = move
 
-@celery.task
-def r(state, map, move, depth):
+def calcScore(state,map):
+    score = 0
+    score -= len(state.moveList)
+    score += 25 * map.lams
+    if map.done:
+        score += 50 * map.lams
+    else:
+        # Assumption that we'll abort
+        score += 25 * map.lams
+
+    return score
+
+def l(q, shortestSolution, highestScore):
+    while(True):
+        (state, map, move, depth) = q.get()
+
+        r(q, state, map, move, depth, shortestSolution,highestScore)
+
+        q.task_done()
+        #print "Task done"
+
+def r(q,state, map, move, depth, shortestSolution,highestScore):
     oldmap = map
     oldstate = state
     map = copy.deepcopy(oldmap)
@@ -92,30 +139,53 @@ def r(state, map, move, depth):
     if map.move(move):
         # Well, we died - so probably not a great idea
         if map.died:
-            print "Died at depth", depth, "ended"
-            return state.shortestSolution
+            #print "Died at depth", depth, "ended"
+            return shortestSolution.value
 
         # We tried to move NOT wait...but we didn't move. That means we're
         # trying to move into a wall 
         if map.robot_pos == oldmap.robot_pos and move != MOVE_WAIT:
-            print "Invalid move", depth, "ended"
-            return state.shortestSolution
+            #print "Invalid move", depth, "ended"
+            return shortestSolution.value
+
+        prevMove = None
+        if len(state.moveList):
+            prevMove = state.moveList[len(state.moveList)-1]
+
+        state.viewList.append(viewport(map, map.robot_pos, oldmap.robot_pos,
+            prevMove))
 
         state.moveList.append(move)
-        print "Took move: ", move, "recursion depth",depth, "total moves",len(state.moveList)
-        print "Move list: ",state.moveList
-        print oldmap
-        print map
+        #print "Took move: ", move, "recursion depth",depth, "total moves",len(state.moveList)
+        #print "Move list: ",state.moveList
+        #print oldmap
+        #print map
+
+
+        score = calcScore(state, map)
+
+        if score > highestScore.value:
+            highestScore.value = score
+            print "New high score",score, "".join(state.moveList),\
+                len(state.moveList), "moves"
+            print state
+            print state.getTrainingData()
 
         if map.done:
-            print "Success in " + str(len(state.moveList)) +  " moves: " +\
-            str(state.moveList) + " vs " + str(state.shortestSolution)
+            l = len(state.moveList)
+            if l < shortestSolution.value:
+                shortestSolution.value = l
+            print "Success in " + str(l) +  " moves: " +\
+                "".join(state.moveList) + " vs " + str(shortestSolution.value),\
+                "Score: ", score
+            print state
+            print state.getTrainingData()
             return len(state.moveList)
 
-        if len(state.moveList) >= state.shortestSolution:
-            print "Bailing not going more steps than our shortest solution of",\
-                state.shortestSolution
-            return state.shortestSolution
+        if len(state.moveList) >= shortestSolution.value:
+            #print "Bailing not going more steps than our shortest solution of",\
+           #     shortestSolution.value
+            return shortestSolution.value
 
         ###
         ## Update the state following a move
@@ -136,8 +206,8 @@ def r(state, map, move, depth):
                 # changed since
                     # return False
                 if idx != -1:
-                    print "Branch looped at depth", depth, "ended"
-                    return state.shortestSolution
+                    #print "Branch looped at depth", depth, "ended"
+                    return shortestSolution.value
 
         # If the map changed, clear the position list
         if map.changed:
@@ -164,7 +234,7 @@ def r(state, map, move, depth):
             # Or if we are turning around, but we changed the map - that is
             # okay
             elif map.changed:
-                print "Turning around after map changed"
+                #print "Turning around after map changed"
                 moves.append(dir)
 
         # If we already waited but the map changed, try again
@@ -180,21 +250,30 @@ def r(state, map, move, depth):
                 #lib.regress.r.delay(state, map, dir,depth+1)
 
         if len(moves) == 0:
-            print "Branch failed at depth", depth
-            return state.shortestSolution
+            #print "Branch failed at depth", depth
+            return shortestSolution.value
 
         if (depth+1)>= state.maxDepth:
-            print "Branch died at depth", depth+1
-            return state.shortestSolution
+            #print "Branch died at depth", depth+1
+            return shortestSolution.value
+
+        shuffle(moves)
 
         for move in moves:
-            if (depth+1) < state.shortestSolution:
-                state.shortestSolution = min(r(state, map, move, depth+1),\
-                        state.shortestSolution)
-            else:
-                print "Not recursing because", depth+1, ">", state.shortestSolution
+            if (depth+1) < shortestSolution.value:
+                #print "Eneuqing", state.moveList, move,depth+1
 
-        return state.shortestSolution
+                #if not q.full():
+                if q.qsize() < 1000:
+                    q.put((state,map,move,depth+1))
+                else:
+                    #print "Queue is full, just recursing"
+                    r(q, state, map, move, depth+1,\
+                            shortestSolution,highestScore)
+            #else:
+                #print "Not recursing because", depth+1, ">", shortestSolution.value
+
+    return shortestSolution.value
 
     ## Movement rules
     # Try each direction that is NOT the direction we came from
