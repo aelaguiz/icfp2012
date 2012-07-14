@@ -5,6 +5,8 @@ import sys
 from eval import eval
 import md5
 
+from priority import *
+
 from port import viewport
 
 from random import shuffle
@@ -35,12 +37,14 @@ class State:
         self.lastMoveDir = None
         self.moveList = []
         self.hs = None
+        self.score = 0
 
     def copy(self, old):
         self.posList = list(old.posList)
         self.viewList = list(old.viewList)
         self.lastMoveDir = old.lastMoveDir
         self.moveList = list(old.moveList)
+        self.score = old.score
 
     def __repr__(self):
         res = "".join(self.moveList) + "\n"
@@ -74,49 +78,57 @@ def aggress(map):
     jobs = []
 
     longestSolution = Value('d', 20)
-    highestScore = Value('d', 0)
+    hs = Value('d', 0)
 
-    queue = JoinableQueue()
 
     manager = Manager()
 
     d = manager.dict()
     d.clear()
 
+    queue = manager.list()
+
     l = RLock()
+    ql = RLock()
+
+    recurseValidMoves(l, hs, d, queue, ql, state, map, 0)
 
     if multiProc:
-        queue.put((state, map, 1))
+        procs = []
 
         for i in range(numProcs):
-           p = Process(target = multiMain, args=(startMap, l, d, queue,highestScore))
+           p = Process(target = multiMain, args=(startMap, l, d, queue,ql, hs))
            p.start()
+           procs.append(p)
 
-        queue.join()
+        #for p in procs:
+            #p.join()
+
     else:
-        a(l, highestScore, d, None, state, map, 1)
+        multiMain(startMap, l, d, queue, ql, hs)
 
-def calcScore(state,map):
-    score = 0
-    score -= len(state.moveList)
-    score += 25 * map.lams
-    if map.done:
-        score += 50 * map.lams
-    else:
-        # Assumption that we'll abort
-        score += 25 * map.lams
-
-    return score
-
-def multiMain(sm, l, d, q, hs):
+def multiMain(sm, l, d, q, ql,  hs):
     startMap = sm
 
     while(True):
-        (state, map, depth) = q.get()
+        #(state, map, depth) = q.get()
 
-        a(l, hs, d, q,state,map,depth)
+        #print os.getpid(), "Trying to dequeue...", len(q)
+        res = dequeue(ql, q)
+        while None == res:
+            #print os.getpid(), "Waiting a second..."
+            time.sleep(1)
+            #print os.getpid(), "Trying again to dequeue...", len(q)
+            res = dequeue(ql, q)
+            #print os.getpid(), "Back from dequeue"
 
-        q.task_done()
+        (state, map, move, depth) = res
+
+        #print os.getpid(), "Evaluating"
+        a(l, hs, d, q, ql, state,map,move, depth)
+        #print os.getpid(), "Done"
+
+        #q.task_done()
 
 def getValidMoves(map):
     valid = []
@@ -128,22 +140,19 @@ def getValidMoves(map):
 
     return valid
 
-def a(l, hs,d, q,state,map,depth):
-    if knownMap(l, d, state, map):
-        return 
-
+def recurseValidMoves(l, hs, d, q, ql, state, map, depth):
     validMoves = getValidMoves(map)
 
     shuffle(validMoves)
 
-    #print map
-    #print validMoves
-
     for move in validMoves:
-        newMap = Map()
-        newMap.copy(map)
+        #tryMove(l, hs,d,q, ql, state,newMap,move,depth)
+        recurse(l, hs, d, q, ql, state,map,move,depth)
 
-        tryMove(l, hs,d,q,state,newMap,move,depth)
+
+def a(l, hs,d, q, ql, state,map,move, depth):
+    if tryMove(l, hs,d,q, ql, state,map,move,depth):
+        recurseValidMoves(l, hs, d, q, ql, state, map, depth)
 
 def getHash(map):
     m = md5.new()
@@ -154,6 +163,111 @@ def getHash(map):
     m.update(str(map.robot_pos))
 
     return m.hexdigest()
+
+
+def tryMove(l, hs, d,q, ql, state,map,move,depth):
+    prevPos = map.robot_pos
+
+    map.move(move)
+
+    if map.died:
+        return False
+
+    if knownMap(l, d, state, map):
+        return False
+
+    evalMove(l, hs, d, q, ql,  state, map, move, depth, prevPos)
+
+    return True
+
+def recurse(l, hs, d, q, ql, state,map,move,depth):
+    if (depth+1) > maxDepth:
+        #print "Bailing past maxDepth", depth+1
+        return 
+
+    if map.died:
+        #print "Bailing, died"
+        return 
+
+    if map.done:
+        #print "Success!"
+        return
+
+    newMap = Map()
+    newMap.copy(map)
+
+    newState = State()
+    newState.copy(state)
+
+    #if q != None and len(q) < 1000:
+    if q != None:
+        enqueue(q, (newState,newMap,move,depth+1), -state.score)
+    #else:
+        #a(l, hs,d,q, ql, state,map,depth+1)
+
+def evalMove(l, hs,d, q, ql, state,map,move, depth,prevPos):
+    state.moveList.append(move)
+
+    state.score = calcScore(state, map)
+
+    #if map.done:
+        #solved(score, state, map)
+
+    evalScore(l, hs,d, state, map)
+
+    recurse(l, hs, d, q, ql, state,map,move,depth)
+
+def evalScore(l, hs,d, state, map):
+    if state.score > hs.value:
+        hs.value = state.score
+        numMoves = len(state.moveList)
+
+        path = "".join(state.moveList)
+
+        if not map.done:
+            path += MOVE_ABORT
+
+        print ""
+        print "New high state.score", state.score
+        print "Moves taken", numMoves
+        print "Path: ", path
+
+        map = Map()
+        print startMap
+        map.copy(startMap)
+
+        eval(path, map)
+
+        #checkHigher(l, hs, d, state, map)
+
+def checkHigher(l, hs, d, oldState, oldMap):
+    map = Map()
+    map.copy(startMap)
+
+    state = State()
+
+    for move in oldState.moveList:
+        map.move(move)
+        state.moveList.append(move)
+
+        hashVal = getHash(map)
+
+        #l.acquire()
+        if hashVal in d:
+            (savedState, savedMap) = d[hashVal]
+
+            newScore = calcScore(state,map)
+            savedScore = calcScore(savedState, savedMap)
+
+            if savedScore > newScore:
+                print "Found higher scoring path"
+                print newScore, oldState.moveList
+                print savedScore, savedState.moveList
+            elif savedScore < newScore:
+                print "Found LOWER scoring path"
+                print newScore, state.moveList
+                print savedScore, savedState.moveList
+        #l.release()
 
 def knownMap(l, d, state, map):
     return _knownMap(l, d, state, map, 0)
@@ -205,6 +319,7 @@ def _knownMap(l, d, state, map, nesting):
         return False
     except:
         if nesting < 3:
+            print "Trying again", nesting+1
             l.acquire()
             res = _knownMap(l, d, state, map, nesting+1)
             l.release()
@@ -212,111 +327,15 @@ def _knownMap(l, d, state, map, nesting):
         else:
             print "Failed after ", nesting, "nested calls"
 
-
-def tryMove(l, hs, d,q,oldState,map,move,depth):
-    prevPos = map.robot_pos
-
-    map.move(move)
-
-    if map.died:
-        return 
-
-    # Now copy state, since we're going with this move
-    state = State()
-    state.copy(oldState)
-
-    evalMove(l, hs, d, state, map, move, prevPos)
-
-    recurse(l, hs, d, q,state,map,move,depth)
-
-def recurse(l, hs, d, q,state,map,move,depth):
-    if (depth+1) > maxDepth:
-        #print "Bailing past maxDepth", depth+1
-        return 
-
-    if map.died:
-        #print "Bailing, died"
-        return 
-
+def calcScore(state,map):
+    score = 0
+    score -= len(state.moveList)
+    score += 25 * map.lams
     if map.done:
-        #print "Success!"
-        return
-
-    if q != None and not q.full():
-        q.put((state,map,depth+1))
+        score += 50 * map.lams
     else:
-        a(l, hs,d,q,state,map,depth+1)
+        # Assumption that we'll abort
+        score += 25 * map.lams
 
-def evalMove(l, hs,d, state,map,move, prevPos):
-    state.moveList.append(move)
+    return score
 
-    score = calcScore(state, map)
-
-    #if map.done:
-        #solved(score, state, map)
-
-    evalScore(l, hs,d, score, state, map)
-
-def solved(score, state, map):
-    numMoves = len(state.moveList)
-
-    print "Solved in", numMoves
-    print "Solution: ", "".join(state.moveList)
-    print "Score: ", score
-
-    #print "Success in " + str(l) +  " moves: " +\
-        #"".join(state.moveList) + " vs " + str(longestSolution.value),\
-        #"Score: ", score
-    print
-
-def evalScore(l, hs,d, score, state, map):
-    if score > hs.value:
-        hs.value = score
-        numMoves = len(state.moveList)
-
-        path = "".join(state.moveList)
-
-        if not map.done:
-            path += MOVE_ABORT
-
-        print ""
-        print "New high score", score
-        print "Moves taken", numMoves
-        print "Path: ", path
-
-        map = Map()
-        print startMap
-        map.copy(startMap)
-
-        eval(path, map)
-
-        #checkHigher(l, hs, d, state, map)
-
-def checkHigher(l, hs, d, oldState, oldMap):
-    map = Map()
-    map.copy(startMap)
-
-    state = State()
-
-    for move in oldState.moveList:
-        map.move(move)
-        state.moveList.append(move)
-
-        hashVal = getHash(map)
-
-        #l.acquire()
-        if hashVal in d:
-            (savedState, savedMap) = d[hashVal]
-
-            newScore = calcScore(state,map)
-            savedScore = calcScore(savedState, savedMap)
-
-            if savedScore > newScore:
-                print "Found higher scoring path"
-                print newScore, oldState.moveList
-                print savedScore, savedState.moveList
-            elif savedScore < newScore:
-                print "Found LOWER scoring path"
-                print newScore, state.moveList
-                print savedScore, savedState.moveList
-        #l.release()
