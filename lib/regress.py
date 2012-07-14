@@ -25,7 +25,7 @@ class State:
         # The actual direction of our last move, excluding waits
         self.lastMoveDir = None
         self.moveList = []
-        self.maxDepth = 100
+        self.maxDepth = 300
 
     def __repr__(self):
         res = "".join(self.moveList) + "\n"
@@ -55,7 +55,7 @@ def regress(map):
 
     jobs = []
 
-    shortestSolution = Value('d', bigNumber)
+    longestSolution = Value('d', 20)
     highestScore = Value('d', 0)
 
     queue = JoinableQueue()
@@ -67,8 +67,8 @@ def regress(map):
     queue.put((state, map, MOVE_RIGHT, 1))
     queue.put((state, map, MOVE_WAIT, 1))
 
-    for i in range(8):
-        p = Process(target = l, args=(queue,shortestSolution,highestScore))
+    for i in range(16):
+        p = Process(target = l, args=(queue,longestSolution,highestScore))
         p.start()
 
     queue.join()
@@ -121,16 +121,16 @@ def calcScore(state,map):
 
     return score
 
-def l(q, shortestSolution, highestScore):
+def l(q, longestSolution, highestScore):
     while(True):
         (state, map, move, depth) = q.get()
 
-        r(q, state, map, move, depth, shortestSolution,highestScore)
+        r(q, state, map, move, depth, longestSolution,highestScore)
 
         q.task_done()
         #print "Task done"
 
-def r(q,state, map, move, depth, shortestSolution,highestScore):
+def r(q,state, map, move, depth, longestSolution,highestScore):
     oldmap = map
     oldstate = state
     map = copy.deepcopy(oldmap)
@@ -140,13 +140,13 @@ def r(q,state, map, move, depth, shortestSolution,highestScore):
         # Well, we died - so probably not a great idea
         if map.died:
             #print "Died at depth", depth, "ended"
-            return shortestSolution.value
+            return longestSolution.value
 
         # We tried to move NOT wait...but we didn't move. That means we're
         # trying to move into a wall 
         if map.robot_pos == oldmap.robot_pos and move != MOVE_WAIT:
             #print "Invalid move", depth, "ended"
-            return shortestSolution.value
+            return longestSolution.value
 
         prevMove = None
         if len(state.moveList):
@@ -165,27 +165,40 @@ def r(q,state, map, move, depth, shortestSolution,highestScore):
         score = calcScore(state, map)
 
         if score > highestScore.value:
+            scoreState = copy.deepcopy(state)
+
+            if not map.done:
+                scoreState.moveList.append(MOVE_ABORT)
+                scoreState.viewList.append(viewport(map, map.robot_pos, map.robot_pos,
+                    move))
+
             highestScore.value = score
-            print "New high score",score, "".join(state.moveList),\
-                len(state.moveList), "moves"
-            print state
-            print state.getTrainingData()
 
-        if map.done:
-            l = len(state.moveList)
-            if l < shortestSolution.value:
-                shortestSolution.value = l
-            print "Success in " + str(l) +  " moves: " +\
-                "".join(state.moveList) + " vs " + str(shortestSolution.value),\
-                "Score: ", score
-            print state
-            print state.getTrainingData()
-            return len(state.moveList)
+            print "New high score",score, "".join(scoreState.moveList),\
+                len(scoreState.moveList), "moves"
+            print scoreState
+            print scoreState.getTrainingData()
 
-        if len(state.moveList) >= shortestSolution.value:
-            #print "Bailing not going more steps than our shortest solution of",\
-           #     shortestSolution.value
-            return shortestSolution.value
+            l = len(scoreState.moveList)
+            if l > longestSolution.value:
+                longestSolution.value = l
+
+        #if map.done:
+            #l = len(state.moveList)
+            #if l > longestSolution.value:
+                #longestSolution.value = l
+            #print "Success in " + str(l) +  " moves: " +\
+                #"".join(state.moveList) + " vs " + str(longestSolution.value),\
+                #"Score: ", score
+            #print state
+            #print state.getTrainingData()
+            #return len(state.moveList)
+
+        ## Caught in termination condition instead
+        #if len(state.moveList) >= (longestSolution.value*1.25):
+            ##print "Bailing not going more steps than our shortest solution of",\
+           ##     longestSolution.value
+            #return longestSolution.value
 
         ###
         ## Update the state following a move
@@ -207,7 +220,7 @@ def r(q,state, map, move, depth, shortestSolution,highestScore):
                     # return False
                 if idx != -1:
                     #print "Branch looped at depth", depth, "ended"
-                    return shortestSolution.value
+                    return longestSolution.value
 
         # If the map changed, clear the position list
         if map.changed:
@@ -251,29 +264,31 @@ def r(q,state, map, move, depth, shortestSolution,highestScore):
 
         if len(moves) == 0:
             #print "Branch failed at depth", depth
-            return shortestSolution.value
+            return longestSolution.value
 
         if (depth+1)>= state.maxDepth:
             #print "Branch died at depth", depth+1
-            return shortestSolution.value
+            return longestSolution.value
 
         shuffle(moves)
 
         for move in moves:
-            if (depth+1) < shortestSolution.value:
+            # Longest solution functions as an upper bound for further
+            # exploration we don't go more than 25% deeper
+            if longestSolution.value == 0 or (depth+1) < (longestSolution.value*2):
                 #print "Eneuqing", state.moveList, move,depth+1
 
-                #if not q.full():
-                if q.qsize() < 1000:
+                if not q.full():
+                #if q.qsize() < 1000:
                     q.put((state,map,move,depth+1))
                 else:
                     #print "Queue is full, just recursing"
                     r(q, state, map, move, depth+1,\
-                            shortestSolution,highestScore)
+                            longestSolution,highestScore)
             #else:
-                #print "Not recursing because", depth+1, ">", shortestSolution.value
+                #print "Not recursing because", depth+1, ">", longestSolution.value
 
-    return shortestSolution.value
+    return longestSolution.value
 
     ## Movement rules
     # Try each direction that is NOT the direction we came from

@@ -11,6 +11,7 @@ MOVE_RIGHT='R'
 MOVE_UP='U'
 MOVE_DOWN='D'
 MOVE_WAIT='W'
+MOVE_ABORT='A'
 
 class Map:
     def __init__(self):
@@ -21,8 +22,9 @@ class Map:
         self.died = False
         self.done = False
         self.changed = False
+        self.robot_pos = None
 
-    def copy(old):
+    def copy(self, old):
         self.width = old.width
         self.height = old.height
         self.lams = old.lams
@@ -34,6 +36,7 @@ class Map:
 
         self.done = old.done
         self.changed = old.changed
+        self.robot_pos = old.robot_pos
 
     def addLine(self, line):
         # Assumes no trailing newline
@@ -117,6 +120,62 @@ class Map:
                     cnt += 1
 
         return cnt
+
+    def valid_move(self, move):
+        if move == MOVE_WAIT:
+            return True
+
+        def valid(x,y):
+            return self.valid(x,y)
+
+        def empty(x,y):
+            return self.empty(x,y)
+
+        def rock(x,y):
+            return self.rock(x,y)
+
+        new_pos = self.robot_pos
+
+        if(move == MOVE_LEFT):
+            new_pos = (new_pos[0]-1, new_pos[1])
+        elif (move == MOVE_RIGHT):
+            new_pos = (new_pos[0]+1, new_pos[1])
+        elif(move == MOVE_UP):
+            new_pos = (new_pos[0], new_pos[1]+1)
+        elif(move == MOVE_DOWN):
+            new_pos = (new_pos[0], new_pos[1]-1)
+
+        if not valid(new_pos[0], new_pos[1]):
+            return False
+
+        new_cell = self.get(new_pos[0], new_pos[1])
+
+        ##print "New cell is",new_cell, " at ", new_pos
+        #(x', y' ) is Empty, Earth, Lambda or Open Lambda Lift.
+        #   - If it is a Lambda, that Lambda is collected.
+        #   - If it is an Open Lambda Lift, the mine is completed
+        if new_cell == EMPTY or new_cell == EARTH:
+            return True
+
+        elif new_cell == LAMBDA:
+            return True
+
+        elif new_cell == OPEN_LIFT:
+            return True
+
+        # If x' = x + 1 and y' = y (i.e. the Robot moves right), (x'
+        # ,y') is a Rock, and (x + 2; y) is Empty. 
+        elif new_cell == ROCK and move == MOVE_RIGHT and \
+            empty(self.robot_pos[0]+2,self.robot_pos[1]):
+            return True
+
+        # If x' = x - 1 and y' = y (i.e. the Robot moves left), (x'
+        # y') is a Rock, and (x -  2; y) is Empty.  
+        elif new_cell == ROCK and move == MOVE_LEFT and\
+            empty(self.robot_pos[0]-2,self.robot_pos[1]):
+            return True
+
+        return False
 
     def move(self, move):
         # We reset the change flag each tick so it can be used to determine
@@ -219,6 +278,8 @@ class Map:
         return True
 
     def update(self):
+        newMap = [list(r) for r in self.map]
+
         def valid(x,y):
             return self.valid_coord(x,y)
 
@@ -227,7 +288,7 @@ class Map:
 
         def set(x,y, value):
             self.changed = True
-            self.set(x,y,value)
+            newMap[y][x] = value
 
         # Not safe to simply say "not empty" because that may indicate it is an
         # invalid cell, not that it is actually unoccupied, must use not_empty
@@ -311,3 +372,5 @@ class Map:
                 if cell == CLOSED_LIFT and lams == 0:
                     # (x; y) is updated to Open Lambda Lift.
                     set(x,y,OPEN_LIFT)
+
+        self.map = newMap
