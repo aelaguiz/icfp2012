@@ -1,3 +1,5 @@
+import sys
+
 ROBOT = 'R'
 ROCK = '*'
 EMPTY = ' '
@@ -23,6 +25,8 @@ class Map:
         self.done = False
         self.changed = False
         self.robot_pos = None
+        self.exit_pos = None
+        self.lam_pos = []
 
     def copy(self, old):
         self.width = old.width
@@ -37,6 +41,8 @@ class Map:
         self.done = old.done
         self.changed = old.changed
         self.robot_pos = old.robot_pos
+        self.exit_pos = old.exit_pos
+        self.lam_pos = list(old.lam_pos)
 
     def addLine(self, line):
         # Assumes no trailing newline
@@ -63,7 +69,19 @@ class Map:
             for (x,cell) in enumerate(row):
                 if cell == ROBOT:
                     self.robot_pos = (x,y)
+                    break
                     #print "Found robot at", self.robot_pos
+
+        for (y, row) in enumerate(self.map):
+            for (x, cell) in enumerate(row):
+                if cell == LAMBDA:
+                    self.lam_pos.append((x,y))
+
+        self.find_exit()
+
+        #print self.lam_pos
+        #print self
+        #sys.exit(1)
 
     def __repr__(self):
         res = ""
@@ -106,11 +124,97 @@ class Map:
     def rock(self,x,y):
         return self.valid(x,y) and self.get(x,y) == ROCK
 
+    def earth(self,x,y):
+        return self.valid(x,y) and self.get(x,y) == EARTH
+
     def lam(self,x,y):
         return self.valid(x,y) and self.get(x,y) == LAMBDA
 
     def robot(self,x,y):
         return self.valid(x,y) and self.get(x,y) == ROBOT
+
+    def lift(self,x,y):
+        return self.valid(x,y) and (self.get(x,y) == CLOSED_LIFT or
+                self.get(x,y)==OPEN_LIFT)
+
+    def find_exit(self):
+        for (y,row) in enumerate(self.map):
+            for (x,cell) in enumerate(row):
+                if cell == CLOSED_LIFT or\
+                    cell == OPEN_LIFT:
+                    self.exit_pos = (x,y)
+                    print "Exit at ", self.exit_pos
+                    break
+
+    def is_doable(self):
+        possible = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+
+        visited = []
+
+        required = [self.exit_pos] + self.lam_pos
+
+        pos_list = [self.robot_pos]
+
+        while len(pos_list) > 0:
+            pos = pos_list.pop(0)
+            visited.append(pos)
+
+            for delta in possible:
+                x = pos[0] + delta[0]
+                y = pos[1] + delta[1]
+
+                new_pos = (x,y)
+
+                if self.empty(x,y) or self.earth(x,y) or self.lam(x,y) or\
+                    self.lift(x,y):
+                    if new_pos in required:
+                        idx = required.index(new_pos)
+                        required.pop(idx)
+
+                        if len(required) == 0:
+                            return True
+
+                    if new_pos not in visited:
+                        pos_list.append(new_pos)
+
+        return False
+
+    def is_reachable(self, test_pos):
+        possible = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+
+        visited = []
+
+        pos_list = [test_pos]
+
+        while len(pos_list) > 0:
+            pos = pos_list.pop(0)
+            visited.append(pos)
+
+            for delta in possible:
+                x = pos[0] + delta[0]
+                y = pos[1] + delta[1]
+
+                new_pos = (x,y)
+
+                if self.empty(x,y) or self.earth(x,y) or self.lam(x,y):
+                    if new_pos not in visited:
+                        pos_list.append(new_pos)
+                if self.robot(x,y):
+                    return True
+
+        return False
+
+    def is_finishable(self):
+        if not self.is_reachable(self.exit_pos):
+            return False
+
+        for pos in self.lam_pos:
+            if not self.is_reachable(pos):
+                #print "Map unfinishable due to lambda being blocked off"
+                #print self
+                return False
+
+        return True
 
     def lam_count(self):
         cnt = 0
@@ -232,8 +336,20 @@ class Map:
 
         elif new_cell == LAMBDA:
             self.lams += 1
+
             #print "Movement",move,"valid into lambda"
-            #print "Collected lambda, now have", self.lams
+
+            #print "Collected lambda, now have", self.lams, "out of",\
+                #self.lam_count()
+
+            #print self.lam_pos
+            #print self
+
+            idx = self.lam_pos.index((new_pos[0], new_pos[1]))
+            self.lam_pos.pop(idx)
+
+            #print "After removal", self.lam_pos
+
             self.changed = True
 
         elif new_cell == OPEN_LIFT:

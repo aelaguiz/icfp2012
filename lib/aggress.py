@@ -8,7 +8,7 @@ import md5
 
 from port import viewport
 
-from random import shuffle
+from random import shuffle, randint
 
 from multiprocessing import Process,JoinableQueue,Value,Manager,RLock
 
@@ -81,25 +81,30 @@ def aggress(map):
     longestSolution = Value('d', 20)
     highestScore = Value('d', 0)
 
-    queue = JoinableQueue()
-
     manager = Manager()
+
+    queue = manager.list()
 
     d = manager.dict()
     d.clear()
 
     l = RLock()
 
+    queue.append((state, map, 1))
+
     if multiProc:
-        queue.put((state, map, 1))
+        procs = []
 
         for i in range(numProcs):
            p = Process(target = multiMain, args=(startMap, l, d, queue,highestScore))
            p.start()
+           procs.append(p)
 
-        queue.join()
+        for proc in procs:
+            proc.join()
+
     else:
-        a(l, highestScore, d, None, state, map, 1)
+        multiMain(startMap, l, d, queue, highestScore)
 
 def calcScore(state,map):
     score = 0
@@ -116,12 +121,34 @@ def calcScore(state,map):
 def multiMain(sm, l, d, q, hs):
     startMap = sm
 
+    localQueue = []
+
     while(True):
-        (state, map, depth) = q.get()
+        try:
+            item = localQueue.pop(randint(0, len(localQueue)-1))
+            #print "Got item from local queue"
+        except Exception as e:
+            try:
+                item = q.pop(randint(0, len(q)-1))
+                #print "Got item from overall queue"
+            except Exception as e:
+                #print e
+                #print "Sleeping for a sec then trying again"
+                time.sleep(0.01)
+                continue
 
-        a(l, hs, d, q,state,map,depth)
+        #print "Queues", len(localQueue), len(q)
 
-        q.task_done()
+        (state, map, depth) = item
+
+        a(l, hs, d, localQueue,state,map,depth)
+
+        if len(localQueue) >= 100:
+            shuffle(localQueue)
+            half = len(localQueue)/2
+            #print "Dumping", half, "items into overall queue"
+            q += localQueue[half:]
+            localQueue = localQueue[:half]
 
 def getValidMoves(map):
     valid = []
@@ -197,15 +224,22 @@ def recurse(l, hs, d, q,state,map,move,depth):
         return
 
     if queueOk(q):
-        q.put((state,map,depth+1))
+        q.append((state,map,depth+1))
     else:
         a(l, hs,d,q,state,map,depth+1)
 
 def queueOk(q):
-    if sys.platform == 'darwin':
-        return q != None and not q.full()
+    return True
 
-    return q != None and q.qsize() < 1000
+    if randint(1, 10) <= 5:
+        return True
+
+    return False
+
+    #if sys.platform == 'darwin':
+        #return q != None and not q.full()
+
+    #return q != None and q.qsize() < 1000
 
 def evalMove(l, hs,d, state,map,move, prevPos):
     state.moveList.append(move)
@@ -306,7 +340,11 @@ def _knownMap(l, d, state, map, nesting):
                 #print "New score is higher, removing old entry"
                 #print state.moveList, newScore
                 #print oldState.moveList, oldScore
-                del d[hashVal]
+                #del d[hashVal]
+
+                stateCopy = State()
+                stateCopy.copy(state)
+                d[hashVal] = (stateCopy, map)
                 #l.release()
                 return False
 
@@ -332,10 +370,12 @@ def _knownMap(l, d, state, map, nesting):
         #l.release()
         return False
     except Exception as e:
+        print "Failed with", str(e)
         if nesting < 3:
-            l.acquire()
+            time.sleep(0.001)
+            #l.acquire()
             res = _knownMap(l, d, state, map, nesting+1)
-            l.release()
+            #l.release()
             return res
         else:
             print "Failed after ", nesting, "nested calls"
@@ -346,8 +386,8 @@ def getHash(map):
 
     for row in map.map:
         m.update(str(row))
-    m.update(str(map.lams))
-    m.update(str(map.robot_pos))
+    #m.update(str(map.lams))
+    #m.update(str(map.robot_pos))
 
     return m.hexdigest()
 

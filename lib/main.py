@@ -7,6 +7,7 @@ from aggress import aggress
 from regress import regress
 from gen import gen
 from port import svm
+from ga import ga
 
 def parseArgs():
     parser = argparse.ArgumentParser(description='Amir\'s IFC submission',
@@ -27,6 +28,8 @@ def parseArgs():
     parser.add_argument('-g', '--g', dest='gen',type=str,
             required=False, help="Generate training data")
 
+    parser.add_argument('-p', '--ga', dest='ga',default=False,
+            action='store_true', required=False, help="Genetic Algorithm")
 
     return parser.parse_args()
 
@@ -55,6 +58,8 @@ def main():
         aggress(map)
     elif args.svm:
         svm(map)
+    elif args.ga:
+        ga(map)
     elif args.eval:
         eval(args.eval, map)
 
